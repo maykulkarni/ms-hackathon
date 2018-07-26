@@ -1,6 +1,7 @@
 from flask import Flask, request
 import pandas as pd
 from collections import defaultdict
+import ast
 
 app = Flask(__name__)
 
@@ -46,7 +47,8 @@ parent_map = {
 	"NotificationHub": ["Commuincation Hub"],
 	"ServiceFabric": ["Web Front End", "APIs", "Backend Processing"],
 	"Search": ["APIs", "Backend Processing"],
-	"VirtualMachine": ["Web Front End", "APIs", "Backend Processing", "DataProcessing"],
+	"VirtualMachine": ["Web Front End", "APIs", "Backend Processing",
+					   "DataProcessing"],
 	"VirtualNetwork": ["Network Isolation", "Hybrid"],
 	"AnalysisServices": ["DataProcessing", "Reporting"],
 	"Batch": ["Backend Processing"],
@@ -62,7 +64,8 @@ parent_map = {
 	"LoadBalancer": ["Network Isolation"],
 	"APIConnection": ["DataProcessing"],
 	"BotService": ["APIs", "Commuincation Hub", "Web Front End"],
-	"ContainerInstances": ["Web Front End", "APIs", "DataProcessing", "Backend Processing"],
+	"ContainerInstances": ["Web Front End", "APIs", "DataProcessing",
+						   "Backend Processing"],
 	"DataFactoryV2": ["DataProcessing", "Backend Processing"],
 	"KeyVault": ["Security Infra"]
 }
@@ -95,7 +98,8 @@ def get_parents_list(features):
 
 def create_master_hash_table():
 	df = pd.read_csv("data.csv")
-	req = ["ResourceGroupId", "Feature", "CategoryName", "VerificationResult", "ControlStringId"]
+	req = ["ResourceGroupId", "Feature", "CategoryName", "VerificationResult",
+		   "ControlStringId"]
 	df = df[req]
 	# Create combination dict
 	feature_combinations = defaultdict(set)
@@ -122,7 +126,9 @@ def create_master_hash_table():
 		features = feature_combinations[res_id]
 		feature_hash = get_feature_hash(features)
 		int_list = master_hash_table.setdefault(feature_hash,
-												{"features": features, "counts": 0, "info": failures[res_id]})
+												{"features": features,
+												 "counts": 0,
+												 "info": failures[res_id]})
 		int_list["counts"] += 1
 	return master_hash_table
 
@@ -130,29 +136,16 @@ def create_master_hash_table():
 updated = False
 
 
-def create_master_category_and_combo():
-	global updated
-	master_hash_table = create_master_hash_table()
-	master_category_table = dict()
-	parent_feature_combo_table = defaultdict(list)
-	for x in master_hash_table:
-		updated = False
-		feature_info = {
-			"features": list(master_hash_table[x]["features"]),
-			"info": master_hash_table[x]["info"]
-		}
-		recurse(list(master_hash_table[x]["features"]), 1, master_hash_table[x]["info"], "", feature_info,
-				master_category_table, parent_feature_combo_table)
-	return master_hash_table, parent_feature_combo_table, master_category_table
-
-
-def recurse(my_list, hash_cache, info, string_cache, feature_info, master_category_table, parent_feature_combo_table):
+def recurse(my_list, hash_cache, info, string_cache, feature_info,
+			master_category_table, parent_feature_combo_table):
 	global updated
 	if my_list:
 		for parent in parent_map[my_list[0]]:
-			recurse(my_list[1:], (hash_cache * category_hash_map[parent]) % BIG_PRIME, info,
+			recurse(my_list[1:],
+					(hash_cache * category_hash_map[parent]) % BIG_PRIME, info,
 					parent + " -> " + string_cache,
-					feature_info, master_category_table, parent_feature_combo_table)
+					feature_info, master_category_table,
+					parent_feature_combo_table)
 	else:
 		to_insert = dict()
 		if hash_cache in master_category_table and not updated:
@@ -176,24 +169,81 @@ def recurse(my_list, hash_cache, info, string_cache, feature_info, master_catego
 	print("#" * 70)
 
 
+def create_master_category_and_combo():
+	global updated
+	master_hash_table = create_master_hash_table()
+	master_category_table = dict()
+	parent_feature_combo_table = defaultdict(list)
+	for x in master_hash_table:
+		updated = False
+		feature_info = {
+			"features": list(master_hash_table[x]["features"]),
+			"info": master_hash_table[x]["info"]
+		}
+		recurse(list(master_hash_table[x]["features"]), 1,
+				master_hash_table[x]["info"], "", feature_info,
+				master_category_table, parent_feature_combo_table)
+	return master_hash_table, parent_feature_combo_table, master_category_table
+
+
+master_hash_table, parent_feature_combo_table, master_category_table = \
+	create_master_category_and_combo()
+
+
 def get_feature_safety(features):
-	master_hash_table, parent_feature_combo_table, master_category_table = create_master_category_and_combo()
 	print("Features: {}".format(features))
 	feature_info = master_hash_table[get_feature_hash(features)]
 	print("Possible Parents: {}".format(get_parents_list(features)))
-	category_info = master_category_table[get_category_hash(get_parents_list(features))]
+	category_info = master_category_table[
+		get_category_hash(get_parents_list(features))]
 	print("Feature info: {}".format(feature_info["info"]))
 	print("Category info: {}".format(category_info))
-	print("Fail percentage: {0:.2f}%".format(feature_info["info"]["Fails"] / feature_info["info"]["Totals"] * 100))
+	final_score = feature_info["info"]["Fails"] / feature_info["info"]["Totals"] * 100
+	print("Fail percentage: {0:.2f}%".format(final_score))
+	return final_score
+
+
+def score(value):
+	num = value["info"]["Fails"]
+	den = value["info"]["Totals"]
+	return num / den
+
+
+def get_safest_feature(categories):
+	parent_hash = get_category_hash(categories)
+	value = parent_feature_combo_table[parent_hash]
+	print("Combos: {}".format(value))
+	best_feature = None
+
+	for x in sorted(value, key=lambda x: score(x)):
+		print(x)
+
+	# for x in value:
+	# 	if best_feature is None or score(x) < score(best_feature):
+	# 		best_feature = x
+	return best_feature
+
+
+@app.route("/recommend", methods=["POST"])
+def get_safest_feature_endpoint():
+	data = request.values
+	categories = ast.literal_eval(data["Categories"])
+	features = data["Features"]
+	print("Categories: {}".format(categories))
+	print("Features: {}".format(features))
+	best_feature = get_safest_feature(categories)
+	print("BF: {}".format(best_feature))
+	return str(best_feature)
 
 
 @app.route('/score', methods=["POST"])
 def hello_world():
 	data = request.values
-	get_feature_safety([""])
-	print("Data: {}".format(data))
-	return "Success"
+	categories = ast.literal_eval(data["Categories"])
+	features = ast.literal_eval(data["Features"])
+	score = get_feature_safety(features)
+	return str(score)
 
 
 if __name__ == '__main__':
-	app.run()
+	app.run(debug=True)
