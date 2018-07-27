@@ -2,6 +2,7 @@ from flask import Flask, request
 import pandas as pd
 from collections import defaultdict
 import ast
+import json
 
 app = Flask(__name__)
 
@@ -19,6 +20,22 @@ feature_hash_map = {
 	"DataLakeStore": 4284113,
 	"CosmosDB": 5602973,
 	"RedisCache": 5603713,
+	"DataFactory": 192097,
+	"DataLakeAnalytics": 192103,
+	"NotificationHub": 192113,
+	"ServiceFabric": 192121,
+	"Search": 192133,
+	"VirtualMachine": 192149,
+	"AnalysisServices": 192161,
+	"Batch": 192173,
+	"ODG": 192187,
+	"ERvNet": 192191,
+	"CloudService": 192193,
+	"LoadBalancer": 192229,
+	"APIConnection": 192233,
+	"BotService": 192239,
+	"ContainerInstances": 192251,
+	"DataFactoryV2": 192259,
 }
 
 category_hash_map = {
@@ -214,26 +231,46 @@ def get_safest_feature(categories):
 	value = parent_feature_combo_table[parent_hash]
 	print("Combos: {}".format(value))
 	best_feature = None
-
+	string = "["
 	for x in sorted(value, key=lambda x: score(x)):
-		print(x)
+		string += str(x["features"])
+	string += "]"
+	return string
 
-	# for x in value:
-	# 	if best_feature is None or score(x) < score(best_feature):
-	# 		best_feature = x
-	return best_feature
+
+def get_safest_features_from_features(features):
+	parents_list = get_parents_list(features)
+	safe_features = get_safest_feature(parents_list)
+	# output_json = "[ RecommendedFeatureGroups: {} ]".format(safe_features)
+	print("SAFE FEATURES: {}".format(safe_features))
+	feature_info = master_hash_table[get_feature_hash(features)]
+	print("FI: {}".format(feature_info))
+	output_json = \
+		"""
+#[
+		"RecommendedFeatureGroups": {0},
+		"CurrentFeatureGroup": {1},
+		"Ranking": {2},
+		"TotalSuccessCount":  {3},
+		"TotalFailCount":  {4},
+		"SecurityRating":  {5},
+		"TotalOccurrences":  {6},
+		"CurrentCategoryGroup: {7}
+#]""".format(safe_features, features, -1, feature_info["info"]["Success"], feature_info["info"]["Fails"],
+			 score(feature_info), feature_info["counts"], parents_list)
+	return output_json.replace("#[", "{").replace("#]", "}")
 
 
 @app.route("/recommend", methods=["POST"])
 def get_safest_feature_endpoint():
-	data = request.values
-	categories = ast.literal_eval(data["Categories"])
+	data = json.loads(request.json)
+	categories = data["Categories"]
 	features = data["Features"]
 	print("Categories: {}".format(categories))
 	print("Features: {}".format(features))
-	best_feature = get_safest_feature(categories)
+	best_feature = get_safest_features_from_features(features)
 	print("BF: {}".format(best_feature))
-	return str(best_feature)
+	return best_feature
 
 
 @app.route('/score', methods=["POST"])
@@ -245,5 +282,11 @@ def hello_world():
 	return str(score)
 
 
+@app.route("/")
+def works():
+	return "Website Works!"
+
+
 if __name__ == '__main__':
-	app.run(debug=True)
+	# app.run(host="0.0.0.0", port=80)
+	app.run()
